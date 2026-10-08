@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import os
 import time
 
 from flask import Blueprint, request, session
@@ -8,6 +7,7 @@ from database.db_handler import save_detection
 from ml_models.model_loader import get_text_detector, wait_for_models_init
 from utils.analysis_presenter import (
     apply_uncertain_label,
+    confidence_for_history,
     explanations_text,
     increment_stats_for_detection,
 )
@@ -39,18 +39,11 @@ def analyze_text():
     wait_for_models_init()
     det = get_text_detector()
     if det is None or not det.is_loaded():
-        extra = ""
-        if (os.environ.get("TRUELENS_ML_API_BASE_URL") or "").strip():
-            extra = (
-                " Remote ML is enabled (TRUELENS_ML_API_BASE_URL): ensure the worker is up, "
-                "reachable from Render, and TRUELENS_ML_API_KEY matches on both sides."
-            )
         return _json(
             False,
             None,
-            "Text model is not available. Train the model and place the files in ml_models/saved_models,"
-            " or configure a remote ML worker (see README §15.3)."
-            + extra,
+            "Text model is not available. Train the model and place the files in ml_models/saved_models "
+            "(e.g. text_model.pkl + tfidf_vectorizer.pkl), or set TRUELENS_TEXT_MODEL_PATH / TRUELENS_TFIDF_PATH.",
         )
     payload = request.get_json(silent=True) or {}
     text = payload.get("text") or request.form.get("text") or ""
@@ -66,20 +59,23 @@ def analyze_text():
     summary = clip_for_summary(text, 200)
     model_label = out["label"]
     conf = float(out["confidence"])
-    display_label, underlying = apply_uncertain_label(model_label, conf)
+    display_label, underlying = apply_uncertain_label(
+        model_label, conf, out.get("p_fake")
+    )
+    ch = confidence_for_history(display_label, conf, out)
     explanations = explanations_text(text, display_label, conf, underlying)
     increment_stats_for_detection(display_label)
     data = {
         "label": display_label,
         "model_label": underlying,
-        "confidence": conf,
+        "confidence": ch,
         "model": out.get("model"),
         "processing_time_ms": elapsed_ms,
         "input_summary": summary,
         "explanations": explanations,
     }
     hid = auto_save_detection_after_analyze(
-        "text", summary, display_label, conf, out.get("model"), elapsed_ms, None
+        "text", summary, display_label, ch, out.get("model"), elapsed_ms, None
     )
     if hid is not None:
         data["history_id"] = hid
@@ -87,7 +83,7 @@ def analyze_text():
         "kind": "text",
         "label": display_label,
         "model_label": underlying,
-        "confidence": conf,
+        "confidence": ch,
         "model": out.get("model"),
         "processing_time_ms": elapsed_ms,
         "input_summary": summary,

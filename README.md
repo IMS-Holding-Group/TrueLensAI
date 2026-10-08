@@ -305,20 +305,20 @@ TfidfVectorizer(max_features=50000, ngram_range=(1, 2))
 **لا تظهر نتائج النص أو تظهر رسالة غياب النموذج**  
 تأكد من وجود `text_model.pkl` و`tfidf_vectorizer.pkl` بعد تشغيل `train_text_model.py`.
 
-**تحليل النص سريع جداً أو يظهر دائماً «Real» لنصوص مزيفة واضحة**  
-مسار TF‑IDF خفيف وغالباً يكتمل بأقل من 200ms — هذا طبيعي. إن كان التصنيف يخالف التوقع دائماً، قد يكون تدريبك يستخدم ترميز تسميات مختلف عن WELFake الافتراضي (0=مزيف، 1=حقيقي): التطبيق يفعّل افتراضياً **`TRUELENS_TEXT_AUTO_FAKE_CLASS=1`** ليستنتج فئة «المزيف» من نصّين مرجعيين عند أول طلب؛ لتعطيله استخدم **`TRUELENS_TEXT_AUTO_FAKE_CLASS=0`** وحدد **`TRUELENS_TEXT_FAKE_CLASS=1`** أو **`TRUELENS_TEXT_INVERT=1`** يدوياً. إن كانت دقة التدريب منخفضة (~50٪) فالنموذج قريب من التخمين العشوائي — أعد التدريب أو راجع عمود التسميات في CSV.  
-يُمزج أيضاً (عند وجود **`predict_proba`**) احتمال النموذج مع **إشارة أسلوب صارخ/كليكبيت** عبر **`TRUELENS_TEXT_HEURISTIC_WEIGHT`** (افتراضي حوالي `0.52`)؛ لتعطيل المزج استخدم **`TRUELENS_TEXT_HEURISTIC_WEIGHT=0`**. عند عدة كلمات عاطفية والنموذج لا يزال يميل للحقيقي، **`TRUELENS_TEXT_STRONG_HEURISTIC=1`** (افتراضي) يعزّز الاحتمال قليلاً؛ عطّله بـ **`0`** إن لم ترد هذا السلوك.
+**تحليل النص سريع جداً أو يظهر تصنيفاً معكوساً دائماً (كل شيء «مزيف» أو كل شيء «حقيقي»)**  
+مسار TF‑IDF خفيف وغالباً يكتمل بأقل من 200ms — هذا طبيعي. تدريب `train_text_model.py` يستخدم WELFake العددي **0 = مزيف، 1 = حقيقي**؛ عند الحفظ يُكتب أيضاً **`text_model_meta.json`** بجانب `text_model.pkl` ليقرأه التطبيق. الافتراضي الآن: **لا** يُستخدم استنتاج junk/wire (كان يسبب عكس التسمية لبعض النماذج). لتفعيل الاستنتاج القديم عيّن **`TRUELENS_TEXT_AUTO_FAKE_CLASS=1`**. إن كان تدريبك يعكس الترميز (`--swap-binary-labels`) فأعد التدريب ليُحدَّث الـ meta، أو عيّن **`TRUELENS_TEXT_FAKE_CLASS=0|1`** يدوياً أو **`TRUELENS_TEXT_INVERT=1`**. إن كانت دقة التدريب منخفضة (~50٪) فالنموذج قريب من التخمين العشوائي — أعد التدريب أو راجع عمود التسميات في CSV.  
+يُمزج أيضاً (عند وجود **`predict_proba`**) احتمال النموذج مع **إشارة أسلوب صارخ/كليكبيت** عبر **`TRUELENS_TEXT_HEURISTIC_WEIGHT`** (افتراضي **`0`** = نتيجة النموذج فقط)؛ لتفعيل المزج عيّن قيمة بين `0` و`1` (مثلاً `0.35`). **`TRUELENS_TEXT_STRONG_HEURISTIC=1`** يعزّز الاحتمال عند عدة كلمات عاطفية إذا كان احتمال المزيف من النموذج منخفضاً؛ افتراضياً **`0`** (معطّل).
 
 **تعذّر تحميل نموذج الصور**  
 تأكد من مسار `image_model.h5` وأن TensorFlow متوافق مع بايثون 3.10.
 
 **الرسالة: Image model is not available رغم وجود الملف**  
 تحقق مما يلي:
-1. **المسار المتوقع:** الافتراضي `ml_models/saved_models/image_model.h5` (أو `image_model.tflite`). إن وضعت الملف تحت `ml_models/image_model.h5` أو `ml/image_model.h5` فالكود يبحث هناك أيضاً بعد التحديث.
+1. **المسار المتوقع:** الافتراضي **`image_model.h5` أولاً** (مخرجات `train_image_model.py`) ثم `image_model.tflite` إن لم يوجد `.h5` صالح. للنشر بدون TensorFlow كامل عيّن **`TRUELENS_IMAGE_PREFER_TFLITE=1`**. إن وضعت الملف تحت `ml_models/image_model.h5` أو `ml/image_model.h5` فالكود يبحث هناك أيضاً.
 2. **مؤشر Git LFS:** إن كان الملف **صغيراً جداً** (مئات البايت) ويبدأ بـ `version https://git-lfs.github.com` فهذا **مؤشر LFS** وليس النموذج — نفّذ `git lfs pull` أو انسخ الملف الثقيل يدوياً.
 3. **`TRUELENS_IMAGE_ONLY_TFLITE`:** إن كانت مفعّلة والملف `.h5` فقط، لن يُحمّل الـ `.h5` — عطّل المتغير أو وفّر `image_model.tflite`.
 4. **`requirements-app.txt`:** بيئة بلا TensorFlow كامل لا تفتح `.h5` — إمّا ثبّت `requirements.txt` للتطوير أو استخدم **TFLite** مع `image_model.tflite`.
-5. **توقيت التحميل:** النماذج تُحمَّل في خيط خلفي؛ أول طلب تحليل **ينتظر** انتهاء التحميل (حتى `TRUELENS_MODEL_LOAD_TIMEOUT_SEC`، افتراضي 600 ث). للتحميل المتزامن عند الإقلاع: **`TRUELENS_EAGER_LOAD_MODELS=1`**.
+5. **توقيت التحميل:** الافتراضي الآن تحميل متزامن عند الإقلاع. لتأجيل التحميل إلى خيط خلفي عيّن **`TRUELENS_DEFER_MODEL_LOAD=1`** (أول طلب ينتظر حتى `TRUELENS_MODEL_LOAD_TIMEOUT_SEC`، افتراضي 600 ث).
 6. **مسار مخصّص:** **`TRUELENS_IMAGE_MODEL_PATH`** = المسار الكامل لملف `.h5` أو `.tflite` إن أردت وضع النموذج خارج المشروع.
 
 **صيغ الصور في الواجهة**  
@@ -442,7 +442,7 @@ def create_app():
 
 ```python
 class Config:
-    SECRET_KEY = "truelens-ai-secret-2024"
+    SECRET_KEY = ""
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATASET_ROOT = os.path.join(BASE_DIR, "datasate")
     WELFAKE_CSV_PATH = os.path.join(DATASET_ROOT, "WELFake_Dataset.csv")
@@ -920,12 +920,10 @@ def _has_kaggle_credentials():
 
 ### 14.1 تصنيف Uncertain (غير مؤكد)
 
-إذا وقعت **ثقة النموذج** ضمن نطاق «منطقة رمادية»، تُعرض النتيجة **Uncertain** بدلاً من Fake/Real فقط، مع الإبقاء على **`model_label`** في استجابة JSON (القرار الخام للنموذج). النطاق الافتراضي قابل للضبط:
+عند توفر **`p_fake`** (احتمال «مزيف» من النموذج)، يُعرض **Uncertain** فقط إذا كان **P(fake)** قريباً جداً من **50%**، أي  
+`|P(fake) − 0.5| ≤ TRUELENS_UNCERTAIN_MARGIN` (افتراضي **`0.01`** ≈ نطاق 49%–51% حول التعادل). هكذا لا تُصنَّف كل الصور «غير مؤكدة» لمجرد أن **ثقة الفئة الفائزة** بين 52% و58% (كان ذلك خطأ منطقياً لأن ثقة الفائز دائماً ≥ 50%).
 
-- **`TRUELENS_UNCERTAIN_LOW`** (افتراضي تقريباً `0.42`)
-- **`TRUELENS_UNCERTAIN_HIGH`** (افتراضي تقريباً `0.58`)
-
-أو عبر `config.py` (`UNCERTAIN_CONFIDENCE_LOW` / `HIGH`) عند التشغيل المحلي.
+إذا لم يُمرَّر `p_fake` (مسار قديم)، يُستخدم نطاق الثقة **`TRUELENS_UNCERTAIN_LOW`** / **`TRUELENS_UNCERTAIN_HIGH`** (افتراضي تقريباً `0.42`–`0.58`) أو قيم `config.py` عند التشغيل المحلي.
 
 ### 14.2 المؤشرات التوضيحية (Indicators)
 
@@ -976,25 +974,11 @@ def _has_kaggle_credentials():
 6. **ذاكرة التشغيل:** فعّل **`TRUELENS_IMAGE_ONLY_TFLITE=1`** إن أردت عدم محاولة تحميل `.h5`. استخدم **عامل Gunicorn واحد** (`web: gunicorn ...`) على الخطة المجانية لتجنّب تكرار النموذج في الذاكرة لكل عامل.
 7. **اختياري:** **`TRUELENS_EAGER_LOAD_MODELS=1`** إن احتجت تحميلاً متزامناً عند الإقلاع (للتشخيص؛ قد يطيل بدء الحاوية).
 
-### 15.3 استدلال عبر API (خادم ML منفصل — بلا نماذج على خادم الويب)
-
-إذا أردت أن **لا تُرفع ولا تُحمَّل** ملفات النماذج على خدمة Render نفسها (لا `.pkl` ولا TensorFlow على الويب):
-
-1. انشر **خادماً ثانياً** (Fly.io، Railway، VPS، أو خدمة Python أخرى على Render بذاكرة أوضح) وضع النماذج على **قرص ذلك الخادم فقط** تحت `ml_models/saved_models/` (أو عيّن **`TRUELENS_IMAGE_MODEL_PATH`** لمسار كامل).
-2. على عامل الاستدلال: ثبّت **`pip install -r requirements-ml-inference.txt`** إن احتجت **`image_model.h5`** مع TensorFlow؛ وإن كان لديك **`image_model.tflite` فقط** يمكن الاكتفاء بـ **`requirements-app.txt`** على Linux بعد نسخ الملفات.
-3. شغّل الخادم من جذر المشروع، مثلاً:  
-   `gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 services.ml_inference_server:app`
-4. على **تطبيق TrueLens (Render)** عيّن:
-   - **`TRUELENS_ML_API_BASE_URL`**: عنوان HTTPS لخادم الاستدلال (مثل `https://ml-worker.example.com`).
-   - **`TRUELENS_ML_API_KEY`**: نفس السرّ على الخادمين؛ الطلبات ترسل **`Authorization: Bearer <المفتاح>`**. بدون مفتاح يبقى الخادم مفتوحاً — **للاختبار أو شبكة خاصة فقط**.
-   - اختياري **`TRUELENS_ML_API_TIMEOUT_SEC`** (افتراضي `120`) لرفع الصور أو الفيديو البطيء.
-5. **الفيديو:** ما زال يعمل عبر عدة طلبات صورة (إطاراً إطاراً) — قد يكون أبطأ عبر الإنترنت.
-
-### 15.4 ربط «النماذج على السحابة» بمشكلة الذاكرة
+### 15.3 ربط «النماذج على السحابة» بمشكلة الذاكرة
 
 وضع الملفات على رابط تنزيل **لا يقلل** ذاكرة التشغيل أثناء الاستدلال بنفسه؛ يقلل حجم الريبو ويحل مشكلة Git LFS. **تخفيف الذاكرة** يأتي من **TFLite + `tflite-runtime` + عدم تحميل TensorFlow كامل** ومن حد أعمال متزامنة معقول.
 
-### 15.5 ملخص متغيرات بيئة مفيدة (جدول مرجعي سريع)
+### 15.4 ملخص متغيرات بيئة مفيدة (جدول مرجعي سريع)
 
 | المتغير | الغرض |
 |---------|--------|
@@ -1004,23 +988,23 @@ def _has_kaggle_credentials():
 | `TEXT_MODEL_DOWNLOAD_URL` / `TFIDF_VECTORIZER_DOWNLOAD_URL` | روابط مباشرة لملفات النص |
 | `IMAGE_MODEL_TFLITE_DOWNLOAD_URL` / `IMAGE_MODEL_DOWNLOAD_URL` | يُفضّل **TFLite** للإنتاج؛ `.h5` أثقل ويحتاج TensorFlow كاملاً |
 | `PRETRAINED_FETCH_REQUIRED` | فشل البناء إن لم تُضبط الروابط |
-| `TRUELENS_ML_API_BASE_URL` | عنوان خادم استدلال منفصل؛ عند التعيين لا يُحمّل النص/الصورة محلياً على خادم الويب |
-| `TRUELENS_ML_API_KEY` | سرّ مشترك بين الويب والعامل؛ ترويسة `Authorization: Bearer …` |
-| `TRUELENS_ML_API_TIMEOUT_SEC` | مهلة HTTP للاستدلال عن بُعد (افتراضي 120 ث) |
 | `TRUELENS_DEFAULT_ADMIN_EMAIL` + `TRUELENS_DEFAULT_ADMIN_PASSWORD` | زرع مشرف عند الإقلاع (اختياري `TRUELENS_DEFAULT_ADMIN_DISPLAY_NAME`) |
 | `TRUELENS_ADMIN_EMAIL` | أول تسجيل بهذا البريد = مشرف |
 | `TRUELENS_BOOTSTRAP_ADMIN` | أول مستخدم في DB فارغة = مشرف (استخدم بحذر) |
 | `TRUELENS_DISABLE_AUTO_HISTORY` | `1` لتعطيل الحفظ التلقائي في السجل بعد التحليل (الاعتماد على زر Save فقط) |
-| `TRUELENS_TEXT_AUTO_FAKE_CLASS` | `1` (افتراضي) يستنتج أي رقم فئة يعني «مزيف» عبر نصّين مرجعيين عند أول تحليل؛ `0`/`off` لتعطيل والاعتماد على `TRUELENS_TEXT_FAKE_CLASS` فقط |
-| `TRUELENS_TEXT_FAKE_CLASS` | `0` أو `1` يدوياً (يتجاوز الاستنتاج التلقائي عند التعيين) |
+| `TRUELENS_TEXT_AUTO_FAKE_CLASS` | **`0`** (افتراضي) يعتمد `text_model_meta.json` من التدريب ثم **0=مزيف** لنماذج ثنائية `{0,1}`؛ **`1`** يفعّل استنتاج junk/wire القديم |
+| `TRUELENS_TEXT_FAKE_CLASS` | `0` أو `1` يدوياً (يتجاوز الـ meta والاستنتاج عند التعيين) |
 | `TRUELENS_TEXT_INVERT` | `1` يعكس احتمال الفئات الثنائية (تشخيص عند اختلاف التسميات عن WELFake) |
-| `TRUELENS_TEXT_HEURISTIC_WEIGHT` | وزن (0–1) يمزج احتمال «مزيف» من النموذج مع درجة كلمات صارخة؛ `0` يعطّل المزج؛ افتراضي تقريباً `0.52` |
-| `TRUELENS_TEXT_STRONG_HEURISTIC` | `1` (افتراضي) يعزّز النتيجة عند أربع إصابات أسلوبية أو أكثر إذا كان احتمال النموذج للمزيف ما زال أقل من 55٪؛ `0`/`off` لتعطيل |
-| `TRUELENS_UNCERTAIN_LOW` / `HIGH` | نطاق عرض **Uncertain** |
-| `TRUELENS_IMAGE_ONLY_TFLITE` | إجبار مسار TFLite فقط |
-| `TRUELENS_EAGER_LOAD_MODELS` | تحميل النماذج عند الإقلاع مباشرة |
+| `TRUELENS_TEXT_HEURISTIC_WEIGHT` | وزن (0–1) يمزج احتمال «مزيف» من النموذج مع درجة كلمات صارخة؛ افتراضي **`0`** (مزج معطّل) |
+| `TRUELENS_TEXT_STRONG_HEURISTIC` | **`1`** لتفعيل تعزيز عند ≥4 كلمات عاطفية؛ افتراضي **`0`** (معطّل) |
+| `TRUELENS_UNCERTAIN_MARGIN` | عند استخدام `p_fake`: عرض نطاق «غير مؤكد» حول 50% (افتراضي `0.01`) |
+| `TRUELENS_DEFER_MODEL_LOAD` | `1` لتحميل النماذج في خيط خلفي بدل التحميل المتزامن عند الإقلاع (الافتراضي: تحميل متزامن) |
+| `TRUELENS_UNCERTAIN_LOW` / `HIGH` | نطاق **Uncertain** على **الثقة** فقط إذا لم يُستخدم `p_fake` (احتياطي) |
+| `TRUELENS_IMAGE_ONLY_TFLITE` | إجبار مسار TFLite فقط (لا يُحمّل `.h5`) |
+| `TRUELENS_IMAGE_PREFER_TFLITE` | `1` لتفضيل **`image_model.tflite`** قبل **`.h5`** (مثلاً إنتاج بلا TensorFlow كامل)؛ **الافتراضي: `.h5` أولاً** |
+| `TRUELENS_IMAGE_PREFER_H5` | `1` لتفضيل `.h5` صراحةً (مكافئ للافتراضي الحالي إن وُجد الملفان) |
 | `TRUELENS_IMAGE_MODEL_PATH` | مسار كامل لـ `image_model.h5` أو `.tflite` خارج المسارات الافتراضية |
 | `TRUELENS_MODEL_LOAD_TIMEOUT_SEC` | أقصى انتظار (ثوانٍ) لانتهاء تحميل النماذج في الخيط قبل أول طلب تحليل (افتراضي 600) |
 
-بهذا يبقى المستودع خفيفاً، ويمكن لـ Render إما تنزيل النماذج مرة عند البناء أو توجيه الاستدلال إلى **خادم ML منفصل** (القسم **15.3** أعلاه) بحيث لا تُحمَّل الأوزان على خادم الويب، والتشغيل يبقى ضمن حدود الذاكرة قدر الإمكان دون رفع داتاسيتات أو مكتبات زائدة مع الكود.
+بهذا يبقى المستودع خفيفاً، ويمكن لـ Render تنزيل النماذج مرة عند البناء، والتشغيل يبقى ضمن حدود الذاكرة قدر الإمكان دون رفع داتاسيتات أو مكتبات زائدة مع الكود.
 

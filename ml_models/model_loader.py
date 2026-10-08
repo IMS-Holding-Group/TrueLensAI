@@ -4,7 +4,7 @@ import os
 import sys
 import threading
 import traceback
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import Config
 
@@ -12,6 +12,86 @@ _text_detector = None
 _image_detector = None
 _video_detector = None
 _models_load_thread: Optional[threading.Thread] = None
+
+# Paths actually used after init_models() (for /_debug/models and logs).
+_last_loaded_text_path: Optional[str] = None
+_last_loaded_tfidf_path: Optional[str] = None
+_last_loaded_image_path: Optional[str] = None
+
+_VECTORIZER_FILENAMES = frozenset(
+    {
+        "tfidf_vectorizer.pkl",
+        "tfidf.pkl",
+        "vectorizer.pkl",
+    }
+)
+_TEXT_PREFERENCE = (
+    "text_model.pkl",
+    "news_classifier.pkl",
+    "classifier.pkl",
+    "model.pkl",
+)
+_TFIDF_PREFERENCE = (
+    "tfidf_vectorizer.pkl",
+    "tfidf.pkl",
+    "vectorizer.pkl",
+)
+
+
+def get_loaded_model_paths() -> Dict[str, Optional[str]]:
+    return {
+        "text_model": _last_loaded_text_path,
+        "tfidf": _last_loaded_tfidf_path,
+        "image": _last_loaded_image_path,
+    }
+
+
+def _pick_real_file(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    if os.path.isfile(path) and not _looks_like_git_lfs_pointer(path):
+        return path
+    return None
+
+
+def _resolve_local_text_paths() -> Tuple[Optional[str], Optional[str]]:
+    """Resolve classifier + vectorizer under saved_models (and env overrides via Config)."""
+    saved = os.path.join(Config.BASE_DIR, "ml_models", "saved_models")
+    txt = _pick_real_file(Config.TEXT_MODEL_PATH)
+    vec = _pick_real_file(Config.TFIDF_PATH)
+    if txt and vec:
+        return txt, vec
+
+    def scan_preferred(names: tuple, current: Optional[str]) -> Optional[str]:
+        if current:
+            return current
+        if not os.path.isdir(saved):
+            return None
+        for name in names:
+            p = os.path.join(saved, name)
+            hit = _pick_real_file(p)
+            if hit:
+                return hit
+        return None
+
+    txt = scan_preferred(_TEXT_PREFERENCE, txt)
+    vec = scan_preferred(_TFIDF_PREFERENCE, vec)
+
+    if not txt and os.path.isdir(saved):
+        try:
+            names = sorted(f for f in os.listdir(saved) if f.lower().endswith(".pkl"))
+        except OSError:
+            names = []
+        others = [f for f in names if f.lower() not in {x.lower() for x in _VECTORIZER_FILENAMES}]
+        if len(others) == 1:
+            txt = _pick_real_file(os.path.join(saved, others[0]))
+
+    if txt and not vec:
+        vec = scan_preferred(_TFIDF_PREFERENCE, None)
+    if vec and not txt:
+        txt = scan_preferred(_TEXT_PREFERENCE, None)
+
+    return txt, vec
 
 
 def _unique_paths(*paths: str) -> List[str]:
@@ -51,12 +131,22 @@ def _first_real_model_file(paths: List[str]) -> Optional[str]:
 
 
 def _resolve_image_model_path() -> Optional[str]:
-    # TFLite first unless TRUELENS_IMAGE_PREFER_H5; TRUELENS_IMAGE_ONLY_TFLITE blocks .h5.
+    # Default: Keras .h5 first (local train_image_model.py output). Use TRUELENS_IMAGE_PREFER_TFLITE=1
+    # to prefer TFLite (e.g. production without full TensorFlow). TRUELENS_IMAGE_ONLY_TFLITE blocks .h5.
     override = (os.environ.get("TRUELENS_IMAGE_MODEL_PATH") or "").strip()
     if override:
         if os.path.isfile(override) and not _looks_like_git_lfs_pointer(override):
             return override
     tflite_only = os.environ.get("TRUELENS_IMAGE_ONLY_TFLITE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if tflite_only:
+        return _first_real_model_file(_image_tflite_candidates())
+
+    prefer_tflite = os.environ.get("TRUELENS_IMAGE_PREFER_TFLITE", "").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -68,14 +158,16 @@ def _resolve_image_model_path() -> Optional[str]:
         "yes",
         "on",
     )
-    if prefer_h5:
+    if prefer_tflite and not prefer_h5:
+        p = _first_real_model_file(_image_tflite_candidates())
+        if p is not None:
+            return p
         return _first_real_model_file(_image_h5_candidates())
-    p = _first_real_model_file(_image_tflite_candidates())
+
+    p = _first_real_model_file(_image_h5_candidates())
     if p is not None:
         return p
-    if tflite_only:
-        return None
-    return _first_real_model_file(_image_h5_candidates())
+    return _first_real_model_file(_image_tflite_candidates())
 
 
 def _looks_like_git_lfs_pointer(path: str) -> bool:
@@ -99,44 +191,43 @@ def resolve_image_model_path() -> Optional[str]:
 def init_models() -> None:
     # Load text / image / video detectors when model files exist.
     global _text_detector, _image_detector, _video_detector
+    global _last_loaded_text_path, _last_loaded_tfidf_path, _last_loaded_image_path
     from ml_models.text_detector import TextDetector
     from ml_models.video_detector import VideoDetector
 
-    remote_url = (os.environ.get("TRUELENS_ML_API_BASE_URL") or "").strip()
-    if remote_url:
-        remote_url = remote_url.rstrip("/")
-        api_key = (os.environ.get("TRUELENS_ML_API_KEY") or "").strip()
-        try:
-            from ml_models.remote_detectors import RemoteImageDetector, RemoteTextDetector
-
-            _text_detector = RemoteTextDetector(remote_url, api_key)
-            _image_detector = RemoteImageDetector(remote_url, api_key)
-            _video_detector = VideoDetector(_image_detector)
-        except Exception:
-            print("TrueLens: failed to configure remote ML API clients.", file=sys.stderr)
-            traceback.print_exc()
-            _text_detector = None
-            _image_detector = None
-            _video_detector = None
-        return
+    _last_loaded_text_path = None
+    _last_loaded_tfidf_path = None
+    _last_loaded_image_path = None
 
     _text_detector = None
-    if os.path.isfile(Config.TEXT_MODEL_PATH) and os.path.isfile(Config.TFIDF_PATH):
-        if _looks_like_git_lfs_pointer(Config.TEXT_MODEL_PATH) or _looks_like_git_lfs_pointer(
-            Config.TFIDF_PATH
-        ):
+    text_p, vec_p = _resolve_local_text_paths()
+    if text_p and vec_p:
+        if _looks_like_git_lfs_pointer(text_p) or _looks_like_git_lfs_pointer(vec_p):
             print(
-                "TrueLens: text_model.pkl or tfidf_vectorizer.pkl is a Git LFS pointer. "
-                "Use render_git_lfs_pull.sh in build or PRETRAINED_MODELS_BASE_URL.",
+                "TrueLens: text model or tfidf file is a Git LFS pointer (not real weights on disk). "
+                f"classifier={text_p!r} vectorizer={vec_p!r}",
                 file=sys.stderr,
             )
         else:
             try:
-                _text_detector = TextDetector(Config.TEXT_MODEL_PATH, Config.TFIDF_PATH)
+                _text_detector = TextDetector(text_p, vec_p)
+                _last_loaded_text_path = text_p
+                _last_loaded_tfidf_path = vec_p
+                print(
+                    f"TrueLens: loaded text models - classifier={text_p!r}, vectorizer={vec_p!r}",
+                    file=sys.stderr,
+                )
             except Exception:
                 print("TrueLens: failed to load text models.", file=sys.stderr)
                 traceback.print_exc()
                 _text_detector = None
+    else:
+        print(
+            "TrueLens: no local text models found. Expected .pkl files under "
+            f"{os.path.join(Config.BASE_DIR, 'ml_models', 'saved_models')!r} "
+            "(e.g. text_model.pkl + tfidf_vectorizer.pkl), or set TRUELENS_TEXT_MODEL_PATH / TRUELENS_TFIDF_PATH.",
+            file=sys.stderr,
+        )
 
     _image_detector = None
     img_path = _resolve_image_model_path()
@@ -162,6 +253,9 @@ def init_models() -> None:
             from ml_models.image_detector import ImageDetector
 
             _image_detector = ImageDetector(img_path)
+            if _image_detector.is_loaded():
+                _last_loaded_image_path = img_path
+                print(f"TrueLens: loaded image model from {img_path!r}", file=sys.stderr)
         except Exception:
             print("TrueLens: failed to load image model.", file=sys.stderr)
             traceback.print_exc()
@@ -191,7 +285,7 @@ def start_models_loading_thread() -> None:
 
 
 def wait_for_models_init(timeout: Optional[float] = None) -> None:
-    # Join background loader (skipped when TRUELENS_EAGER_LOAD_MODELS loaded sync).
+    # Join background loader when TRUELENS_DEFER_MODEL_LOAD=1; otherwise init_models() already ran in create_app.
     global _models_load_thread
     if timeout is None:
         raw = (os.environ.get("TRUELENS_MODEL_LOAD_TIMEOUT_SEC") or "").strip()
